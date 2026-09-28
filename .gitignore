@@ -11,3 +11,9 @@ starter/**/kasir
 .DS_Store
 .idea/
 .vscode/
+
+# Local Codex/agent state
+.codex/
+.agents/
+**/.codex/
+**/.agents/
