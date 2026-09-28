@@ -1,0 +1,13 @@
+# Go build artifacts
+*.exe
+*.test
+*.out
+coverage.out
+
+# Local binaries
+starter/**/kasir
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
