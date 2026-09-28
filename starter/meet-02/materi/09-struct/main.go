@@ -2,6 +2,12 @@ package main
 
 import "fmt"
 
+type BLKPP struct {
+	Kelompok string
+	ID int
+	Nama string
+}
+
 type Mahasiswa struct {
 	Nama  string
 	Umur  int
@@ -17,16 +23,30 @@ func statusLulus(nilai int) string {
 }
 
 func main() {
-	mahasiswa := Mahasiswa{
-		Nama:  "Andi",
-		Umur:  20,
-		Nilai: 82,
+	// fungsi baca
+	//for ... {
+	//	studentBlkpp = BLKPP{
+	//		Kelompok: row[i].Kelompok
+	//		ID: row[i].ID
+	//		Nama: row[i].Nama
+	//	}
+	// }
+
+	//mahasiswa := Mahasiswa{
+	//	Nama:  "Andi",
+	//	Umur:  20,
+	//	Nilai: 82,
+	//}
+
+	blkpp := BLKPP{
+		Kelompok: "Kelompok 1",
+		ID: 1,
+		Nama: "Budi",
 	}
 
-	fmt.Println("Nama:", mahasiswa.Nama)
-	fmt.Println("Umur:", mahasiswa.Umur)
-	fmt.Println("Nilai:", mahasiswa.Nilai)
-	fmt.Println("Status:", statusLulus(mahasiswa.Nilai))
+	fmt.Println("Nama:", blkpp.Nama)
+	fmt.Println("ID:", blkpp.ID)
+	fmt.Println("Kelompok:", blkpp.Kelompok)
 
 	daftarMahasiswa := []Mahasiswa{
 		{Nama: "Budi", Umur: 21, Nilai: 70},
@@ -34,6 +54,8 @@ func main() {
 	}
 
 	for _, data := range daftarMahasiswa {
-		fmt.Printf("%s - %s\n", data.Nama, statusLulus(data.Nilai))
+		fmt.Println("\nNama", data.Nama)
+		fmt.Println("Umur", data.Umur)
+		fmt.Println("Status Lulus:", statusLulus(data.Nilai))
 	}
 }
