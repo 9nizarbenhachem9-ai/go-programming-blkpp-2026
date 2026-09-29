@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,14 +10,27 @@ import (
 	"strings"
 )
 
-const csvFile = "data/students.csv"
+var jsonFile = "data/students.json"
 
 var reader = bufio.NewReader(os.Stdin)
 
 type Student struct {
-	ID    int
-	Name  string
-	Email string
+	ID      int      `json:"id"`
+	Name    string   `json:"name"`
+	Email   string   `json:"email"`
+	Profile Profile  `json:"profile"`
+	Courses []Course `json:"courses"`
+}
+
+type Profile struct {
+	City  string `json:"city"`
+	Phone string `json:"phone"`
+}
+
+type Course struct {
+	Code  string `json:"code"`
+	Title string `json:"title"`
+	Grade string `json:"grade"`
 }
 
 func main() {
@@ -53,9 +66,15 @@ func main() {
 
 func showStudents() {
 	students := readStudents()
-	fmt.Println("ID | Nama | Email")
+	fmt.Println("ID | Nama | Email | Kota | Mata Kuliah")
 	for _, student := range students {
-		fmt.Printf("%d | %s | %s\n", student.ID, student.Name, student.Email)
+		fmt.Printf("%d | %s | %s | %s | %s\n",
+			student.ID,
+			student.Name,
+			student.Email,
+			student.Profile.City,
+			formatCourses(student.Courses),
+		)
 	}
 }
 
@@ -64,13 +83,24 @@ func addStudent() {
 
 	name := input("Nama: ")
 	email := input("Email: ")
+	city := input("Kota: ")
+	phone := input("Telepon: ")
 
 	id := 1
 	if len(students) > 0 {
 		id = students[len(students)-1].ID + 1
 	}
 
-	students = append(students, Student{id, name, email})
+	students = append(students, Student{
+		ID:    id,
+		Name:  name,
+		Email: email,
+		Profile: Profile{
+			City:  city,
+			Phone: phone,
+		},
+		Courses: []Course{},
+	})
 	writeStudents(students)
 	fmt.Println("Data ditambahkan")
 }
@@ -81,10 +111,14 @@ func updateStudent() {
 	id := inputInt("ID yang diubah: ")
 	name := input("Nama baru: ")
 	email := input("Email baru: ")
+	city := input("Kota baru: ")
+	phone := input("Telepon baru: ")
 
 	for i, student := range students {
 		if student.ID == id {
-			students[i] = Student{id, name, email}
+			students[i].Name = name
+			students[i].Email = email
+			students[i].Profile = Profile{City: city, Phone: phone}
 			writeStudents(students)
 			fmt.Println("Data diubah")
 			return
@@ -112,14 +146,25 @@ func deleteStudent() {
 func searchStudent() {
 	students := readStudents()
 
-	keyword := input("Cari nama/email: ")
+	keyword := input("Cari nama/email/kota/mata kuliah: ")
 	keyword = strings.ToLower(keyword)
 
 	for _, student := range students {
 		name := strings.ToLower(student.Name)
 		email := strings.ToLower(student.Email)
-		if strings.Contains(name, keyword) || strings.Contains(email, keyword) {
-			fmt.Printf("%d | %s | %s\n", student.ID, student.Name, student.Email)
+		city := strings.ToLower(student.Profile.City)
+		courses := strings.ToLower(formatCourses(student.Courses))
+		if strings.Contains(name, keyword) ||
+			strings.Contains(email, keyword) ||
+			strings.Contains(city, keyword) ||
+			strings.Contains(courses, keyword) {
+			fmt.Printf("%d | %s | %s | %s | %s\n",
+				student.ID,
+				student.Name,
+				student.Email,
+				student.Profile.City,
+				formatCourses(student.Courses),
+			)
 		}
 	}
 }
@@ -137,41 +182,37 @@ func inputInt(label string) int {
 }
 
 func readStudents() []Student {
-	file, err := os.Open(csvFile)
+	file, err := os.Open(jsonFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	rows, err := csv.NewReader(file).ReadAll()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	var students []Student
-	for _, row := range rows[1:] {
-		id, _ := strconv.Atoi(row[0])
-		students = append(students, Student{id, row[1], row[2]})
+	if err := json.NewDecoder(file).Decode(&students); err != nil {
+		log.Fatal(err)
 	}
 	return students
 }
 
 func writeStudents(students []Student) {
-	file, err := os.Create(csvFile)
+	file, err := os.Create(jsonFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	writer.Write([]string{"id", "name", "email"})
-	for _, student := range students {
-		writer.Write([]string{
-			strconv.Itoa(student.ID),
-			student.Name,
-			student.Email,
-		})
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(students); err != nil {
+		log.Fatal(err)
 	}
+}
+
+func formatCourses(courses []Course) string {
+	var labels []string
+	for _, course := range courses {
+		labels = append(labels, fmt.Sprintf("%s %s (%s)", course.Code, course.Title, course.Grade))
+	}
+	return strings.Join(labels, ", ")
 }
