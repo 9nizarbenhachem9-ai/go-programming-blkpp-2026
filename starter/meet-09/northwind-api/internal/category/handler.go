@@ -6,12 +6,12 @@ import (
 	"northwind-api/internal/httpjson"
 )
 
-type Handler struct{ repo *Repository }
+type Handler struct{ service *Service }
 
-func NewHandler(repo *Repository) *Handler { return &Handler{repo: repo} }
+func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) GetAll(w http.ResponseWriter, r *http.Request) {
-	values, err := h.repo.GetAll(r.Context())
+	values, err := h.service.GetAll(r.Context())
 	if err != nil {
 		httpjson.DatabaseError(w, err, "CATEGORY")
 		return
@@ -24,7 +24,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := h.repo.GetByID(r.Context(), id)
+	value, err := h.service.GetByID(r.Context(), id)
 	if err != nil {
 		httpjson.DatabaseError(w, err, "CATEGORY")
 		return
@@ -41,7 +41,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusBadRequest, "INVALID_INPUT", "Invalid category fields")
 		return
 	}
-	if err := h.repo.Create(r.Context(), value); err != nil {
+	if err := h.service.Create(r.Context(), value); err != nil {
 		httpjson.DatabaseError(w, err, "CATEGORY")
 		return
 	}
@@ -66,7 +66,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusBadRequest, "INVALID_INPUT", "Invalid category fields")
 		return
 	}
-	if err := h.repo.Update(r.Context(), value); err != nil {
+	if err := h.service.Update(r.Context(), value); err != nil {
 		httpjson.DatabaseError(w, err, "CATEGORY")
 		return
 	}
@@ -78,7 +78,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.repo.Delete(r.Context(), id); err != nil {
+	if err := h.service.Delete(r.Context(), id); err != nil {
 		httpjson.DatabaseError(w, err, "CATEGORY")
 		return
 	}

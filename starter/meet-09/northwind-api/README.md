@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-REST API sederhana untuk database Northwind PostgreSQL schema `public` yang sudah ada di Supabase. Product dan Category memakai Handler → Repository. Order menambahkan Service untuk validasi bisnis, perhitungan, dan transaksi stok. Tidak ada migration otomatis atau pembuatan ulang tabel.
+REST API sederhana untuk database Northwind PostgreSQL schema `public` yang sudah ada di Supabase. Semua module memakai Handler → Service → Repository agar pola workshop konsisten. Service Product dan Category meneruskan operasi CRUD; Service Order menangani validasi bisnis, perhitungan, dan transaksi stok. Tidak ada migration otomatis atau pembuatan ulang tabel.
 
 ## 2. Tujuan pembelajaran
 
@@ -30,11 +30,13 @@ northwind-api/
 │   ├── product/
 │   │   ├── model.go
 │   │   ├── model_test.go
+│   │   ├── service.go
 │   │   ├── repository.go
 │   │   ├── handler.go
 │   │   └── routes.go
 │   ├── category/
 │   │   ├── model.go
+│   │   ├── service.go
 │   │   ├── repository.go
 │   │   ├── handler.go
 │   │   └── routes.go
@@ -62,21 +64,21 @@ northwind-api/
 | `main.go` | Load environment, koneksi, explicit dependency wiring, HTTP server |
 | `model.go` | Struct, JSON tags, validasi nilai, perhitungan murni |
 | `routes.go` | Daftarkan method dan path ke `http.ServeMux` |
-| `handler.go` | Baca request/path, validasi HTTP, panggil repository/service, tulis response |
+| `handler.go` | Baca request/path, validasi HTTP, panggil service, tulis response |
 | `repository.go` | SQL, parameter, Scan, RowsAffected, Close, dan error database |
-| `order/service.go` | Aturan bisnis dan pemilik lifecycle transaksi |
+| `service.go` | Menjalankan use case; Product/Category meneruskan CRUD ke repository, Order mengatur aturan bisnis dan lifecycle transaksi |
 
-Handler meneruskan `r.Context()` sampai query. Product dan Category langsung memakai repository. Semua dependency berupa concrete struct dan diberikan melalui constructor.
+Handler meneruskan `r.Context()` sampai query. Semua handler memakai service, lalu service memakai repository. Semua dependency berupa concrete struct dan diberikan melalui constructor.
 
 ### Pembagian package dan dependency
 
-Project memakai struktur berdasarkan fitur: kode Product berada di `internal/product`, Category di `internal/category`, dan Order di `internal/order`. Setiap module memiliki model, routes, handler, dan repository sendiri. Hanya Order memiliki service karena membutuhkan aturan bisnis lintas tabel.
+Project memakai struktur berdasarkan fitur: kode Product berada di `internal/product`, Category di `internal/category`, dan Order di `internal/order`. Setiap module memiliki model, routes, handler, service, dan repository sendiri. Service Product/Category sengaja tipis agar siswa mempelajari satu alur yang sama; Service Order menunjukkan kebutuhan aturan bisnis lintas tabel.
 
 | Package | Dipakai oleh | Peran |
 |---|---|---|
 | `internal/database` | `main.go` | Membuka koneksi PostgreSQL, mengatur pool, dan memeriksa koneksi saat startup |
-| `internal/product` | `main.go` | CRUD product melalui handler dan repository |
-| `internal/category` | `main.go` | CRUD category melalui handler dan repository |
+| `internal/product` | `main.go` | CRUD product melalui handler, service, dan repository |
+| `internal/category` | `main.go` | CRUD category melalui handler, service, dan repository |
 | `internal/order` | `main.go` | Read order dan create order melalui handler, service, dan repository |
 | `internal/httpjson` | Handler dan routes setiap module, serta `main.go` | Format JSON, decode request, validasi path ID, pemetaan error database, dan fallback method HTTP |
 
@@ -96,15 +98,35 @@ Routes tetap berada di masing-masing module agar peserta dapat menelusuri satu f
 | `DatabaseError` | Mengubah error akses data menjadi status HTTP tanpa mengirim detail SQL |
 | `Fallbacks` | Menghasilkan response JSON 405 dan header `Allow` |
 
-Repository mengembalikan data/error tanpa mengetahui HTTP. Handler memakai `httpjson` untuk menerjemahkan hasilnya menjadi response. Helper ini tidak menjalankan query atau aturan bisnis.
+Repository mengembalikan data/error ke service tanpa mengetahui HTTP. Service meneruskan hasil ke handler; handler memakai `httpjson` untuk menerjemahkannya menjadi response. Helper ini tidak menjalankan query atau aturan bisnis.
+
+### Pemakaian model dan pembagian validasi
+
+`model.go` mendefinisikan Go struct sebagai wadah data, bukan layer yang dipanggil setelah repository. Karena file dalam satu direktori memakai package yang sama, handler, service, dan repository dapat memakai model tanpa import tambahan.
+
+| Model | Dipakai untuk |
+|---|---|
+| `product.Product` | Menampung request create/update, menjadi parameter service/repository, menerima hasil `Scan`, dan membentuk response product |
+| `category.Category` | Menampung request create/update, menjadi parameter service/repository, menerima hasil `Scan`, dan membentuk response category |
+| `order.CreateRequest`, `order.ItemRequest` | Menampung JSON create order dan input aturan bisnis di service |
+| `order.Order`, `order.Item` | Menampung hasil query atau hasil transaksi, termasuk harga, subtotal, dan total, untuk response |
+
+```text
+Request:  JSON → Decode di handler → struct → Service → Repository → SQL
+Response: SQL → Scan di repository → struct → Service → Handler → JSON
+```
+
+`httpjson.Decode` membaca JSON request ke struct; `httpjson.Data` menulis nilai Go sebagai JSON response. Pemindahan hasil SQL ke struct dilakukan oleh `Scan` di repository. `httpjson` tidak mengubah hasil SQL secara langsung menjadi JSON.
+
+Validasi struktur JSON dan path ID berada di handler melalui helper HTTP. Handler Product/Category memanggil `Valid()` pada model sebelum meneruskan create/update ke service. Service CRUD belum menambah validasi sendiri. Service Order memanggil `Validate()` untuk input order lalu memeriksa customer, produk, harga, dan stok dalam transaksi. Constraint PostgreSQL tetap menjaga PK, FK, dan aturan database.
 
 ### Wiring saat startup
 
-`run()` di `main.go` memuat environment, memanggil `database.ConnectDatabase`, lalu memberikan satu `*sql.DB` ke `newMux(db)`. Fungsi `newMux` membuat repository, service khusus Order, handler, dan router secara eksplisit:
+`run()` di `main.go` memuat environment, memanggil `database.ConnectDatabase`, lalu memberikan satu `*sql.DB` ke `newMux(db)`. Fungsi `newMux` membuat repository, service setiap module, handler, dan router secara eksplisit:
 
 ```text
-Product:  db → NewRepository → NewHandler → RegisterRoutes
-Category: db → NewRepository → NewHandler → RegisterRoutes
+Product:  db → NewRepository → NewService → NewHandler → RegisterRoutes
+Category: db → NewRepository → NewService → NewHandler → RegisterRoutes
 Order:    db → NewRepository → NewService → NewHandler → RegisterRoutes
 ```
 
@@ -118,12 +140,14 @@ flowchart TD
 
     subgraph Product["internal/product"]
         PR["routes.go"] --> PH["handler.go"]
-        PH --> PRepo["repository.go"]
+        PH --> PS["service.go"]
+        PS --> PRepo["repository.go"]
     end
 
     subgraph Category["internal/category"]
         CR["routes.go"] --> CH["handler.go"]
-        CH --> CRepo["repository.go"]
+        CH --> CS["service.go"]
+        CS --> CRepo["repository.go"]
     end
 
     subgraph Order["internal/order"]
@@ -152,23 +176,25 @@ Panah penuh menunjukkan alur request/akses data. Panah putus-putus menunjukkan p
 Versi teks untuk pembaca tanpa dukungan Mermaid:
 
 ```text
-HTTP Request → Routes → Handler → Repository → PostgreSQL
-HTTP Request → Routes → Handler → Order Service → Repository → PostgreSQL
+HTTP Request → Routes → Handler → Service → Repository → PostgreSQL
 ```
 
 Contoh `GET /api/products/1`:
 
 1. `ServeMux` mencocokkan method/path yang didaftarkan `product/routes.go` dan mengisi path value `id`.
 2. `product.Handler.GetByID` membaca ID melalui `httpjson.ID`.
-3. Handler memanggil `product.Repository.GetByID` dengan context request.
-4. Repository menjalankan query parameterized pada `public.products` lalu melakukan `Scan`.
-5. Handler mengirim `httpjson.Data` dengan status 200, atau memetakan error melalui `httpjson.DatabaseError`.
+3. Handler memanggil `product.Service.GetByID` dengan context request.
+4. Service meneruskan pemanggilan ke `product.Repository.GetByID`.
+5. Repository menjalankan query parameterized pada `public.products` lalu melakukan `Scan`.
+6. Hasil kembali melalui service ke handler. Handler mengirim `httpjson.Data` dengan status 200, atau memetakan error melalui `httpjson.DatabaseError`.
 
-Hasil kembali melalui repository dan handler sebagai JSON ke client. Tidak ada service tambahan untuk CRUD Product/Category.
+Semua module memakai urutan layer yang sama. Perbedaannya terletak pada isi service: CRUD sederhana diteruskan, sedangkan Order menjalankan aturan bisnis dan transaksi.
 
-## 7. Kapan Service Layer diperlukan
+## 7. Service Layer untuk pola workshop yang konsisten
 
-CRUD satu tabel belum memerlukan service. Order membutuhkan service karena satu request melibatkan beberapa tabel dan aturan stok:
+Di project ini, semua module memiliki service agar siswa mengikuti pola yang sama. Product dan Category belum memiliki aturan bisnis tambahan, sehingga service cukup meneruskan CRUD ke repository. Pada aplikasi kecil lain, layer penerusan ini boleh dilewati; di workshop ini konsistensi alur menjadi alasan mempertahankannya. Jangan menambahkan aturan bisnis buatan hanya untuk mengisi service.
+
+Order menunjukkan peran service ketika satu request melibatkan beberapa tabel dan aturan stok:
 
 1. Validasi ID, customer ID, items, quantity, dan discount; tolak product ID berulang.
 2. Mulai satu `sql.Tx`; cek customer dengan `FOR KEY SHARE`.
@@ -188,10 +214,10 @@ Dari workspace:
 
 ```bash
 cd northwind-api
-cp .env.example .env
+cp -n .env.example .env
 ```
 
-Edit `.env` secara lokal:
+Opsi `-n` mempertahankan `.env` yang sudah ada. Edit `.env` secara lokal dan ganti placeholder host/password dengan konfigurasi Supabase:
 
 ```dotenv
 PORT=8080
@@ -204,7 +230,7 @@ DATABASE_URL=postgresql://postgres:PASSWORD@HOST:5432/postgres?sslmode=require
 
 Salin connection string PostgreSQL dari panel **Connect** project Supabase. Pilih direct connection atau **Session Pooler**, lalu gunakan host, user, password, database, dan port persis dari panel. User pooler biasanya mengandung project reference. Direct host dapat memerlukan IPv6; Session Pooler membantu jaringan IPv4. Gunakan `sslmode=require` dan URL-encode karakter khusus password seperti `@`, `:`, `/`, dan `#`. API ini memakai PostgreSQL langsung, bukan Supabase REST API/SDK atau anon key.
 
-Saat implementasi, workspace tidak menyediakan `.env` atau `DATABASE_URL`. Schema live dan integration database **belum diverifikasi**. Tidak ada klaim bahwa request sudah berhasil di Supabase. Asumsi Northwind PostgreSQL umum berikut dipakai:
+Schema live dan integration database **belum diverifikasi**. Keberadaan `.env` tidak berarti schema atau transaksi sudah diuji; unit test berjalan tanpa koneksi database. Asumsi Northwind PostgreSQL umum berikut dipakai:
 
 | Tabel | Kolom yang digunakan dan asumsi |
 |---|---|
@@ -216,7 +242,7 @@ Saat implementasi, workspace tidak menyediakan `.env` atau `DATABASE_URL`. Schem
 
 Kolom lain seperti `quantity_per_unit`, `units_on_order`, `reorder_level`, `picture`, employee, freight, dan shipping diasumsikan nullable atau memiliki default. API tidak mengelolanya. Tidak ada asumsi ID auto-increment: create selalu meminta ID positif 1–32767. Batas positif merupakan kebijakan API; PostgreSQL smallint sendiri juga menerima nilai negatif.
 
-Product menerima supplier/category ID nullable; foreign key yang salah menghasilkan 409. Product GET memakai COALESCE untuk harga/stok NULL menjadi 0; PUT menyimpan harga/stok baru sebagai nilai non-NULL. Category description menggunakan pointer agar NULL tetap JSON `null`. `discontinued` wajib bertipe angka 0/1 pada varian ini; schema boolean memerlukan penyesuaian model/query. PUT mengganti seluruh field yang dikelola API; ID body opsional tetapi harus sama dengan path jika diberikan. Field angka yang tidak diberikan memakai nilai nol Go; `discontinued` tidak diberikan berarti 0. Field tabel yang tidak dikelola API tidak diubah saat PUT.
+Product menerima supplier/category ID nullable; foreign key yang salah menghasilkan 409. Product GET memakai COALESCE untuk harga/stok NULL menjadi 0; PUT menyimpan harga/stok baru sebagai nilai non-NULL. Category description menggunakan pointer agar NULL tetap JSON `null`. `discontinued` wajib bertipe angka 0/1 pada varian ini; schema boolean memerlukan penyesuaian model/query. PUT mengganti seluruh field yang dikelola API; ID body yang tidak diisi atau bernilai 0 memakai ID path, sedangkan nilai selain 0 harus sama dengan path. Field angka yang tidak diberikan memakai nilai nol Go; `discontinued` tidak diberikan berarti 0. Field tabel yang tidak dikelola API tidak diubah saat PUT.
 
 Sebelum memakai database berbeda, jalankan query read-only berikut lewat SQL Editor Supabase atau `psql` untuk memeriksa tipe, nullability, default, PK, dan FK:
 
@@ -496,6 +522,15 @@ go test ./...
 go vet ./...
 go build ./...
 ```
+
+Pemeriksaan tambahan memakai Staticcheck v0.5.1 yang mendukung Go 1.22:
+
+```bash
+go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
+"$(go env GOPATH)/bin/staticcheck" ./...
+```
+
+Perintah tersebut memasang tool lint terpisah, tanpa menambah dependency aplikasi. Jika mengatur `GOBIN`, jalankan binary dari direktori tersebut.
 
 Test tidak memuat `.env` dan tidak menghubungi database. Cakupan: path ID valid/tidak valid, JSON rusak/unknown/trailing, validasi input, method 405, health, envelope JSON/error, pemetaan error PostgreSQL, dan perhitungan diskon/subtotal. Dependency nil digunakan hanya untuk jalur yang harus berhenti sebelum akses database. Tidak ada integration test otomatis; transaksi/locking/FK perlu diverifikasi secara langsung pada database latihan yang schema-nya sesuai.
 

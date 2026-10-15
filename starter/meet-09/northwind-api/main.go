@@ -59,9 +59,11 @@ func databaseStartupError(err error) error {
 
 func newMux(db *sql.DB) *http.ServeMux {
 	productRepo := product.NewRepository(db)
-	productHandler := product.NewHandler(productRepo)
+	productService := product.NewService(productRepo)
+	productHandler := product.NewHandler(productService)
 	categoryRepo := category.NewRepository(db)
-	categoryHandler := category.NewHandler(categoryRepo)
+	categoryService := category.NewService(categoryRepo)
+	categoryHandler := category.NewHandler(categoryService)
 	orderRepo := order.NewRepository(db)
 	orderService := order.NewService(orderRepo)
 	orderHandler := order.NewHandler(orderService)
