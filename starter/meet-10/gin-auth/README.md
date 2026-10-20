@@ -1,8 +1,9 @@
 # Gin Auth + GORM
 
-Project autentikasi dengan Gin, GORM, Neon PostgreSQL, bcrypt, dan JWT HS256.
-Struktur per fitur mengikuti `../basic-orm`: Handler, Service, Repository.
-Tabel `users` dibuat otomatis lewat `AutoMigrate` ketika server dimulai.
+Project API autentikasi dan product dengan Gin, GORM, Neon PostgreSQL, bcrypt,
+dan JWT HS256. Modul auth memakai Handler, Service, Repository; modul product
+memakai model dan route handler. Tabel `users` dan `products` dibuat otomatis
+lewat `AutoMigrate` ketika server dimulai.
 
 ## Menjalankan
 
@@ -108,6 +109,9 @@ baru pada tiap request.
 | `POST /api/auth/register` | `name`, `email`, `password`; `Content-Type: application/json` | `201`, `data` berisi pengguna | `400` input salah, `409` email terdaftar, `500` gagal menyimpan |
 | `POST /api/auth/login` | `email`, `password`; `Content-Type: application/json` | `200`, `data.access_token`, `data.token_type`, `data.expires_in` | `400` input salah, `401` kredensial salah, `500` gagal memproses |
 | `GET /api/me` | `Authorization: Bearer <access_token>` | `200`, `data` berisi pengguna | `401` token hilang/salah/kedaluwarsa atau pengguna tidak ditemukan, `500` gagal membaca pengguna |
+| `GET /api/private/profile` | `Authorization: Bearer <access_token>` | `200`, `data` berisi pengguna | `401` auth tidak valid, `500` gagal membaca pengguna |
+| `POST /api/private/products` | `name`; `Content-Type: application/json`; Bearer JWT | `201`, `data` berisi product dan pembuat | `400` input salah, `401` auth tidak valid, `500` gagal menyimpan |
+| `GET /api/private/products` | `Authorization: Bearer <access_token>` | `200`, `data` berisi array product milik pengguna | `401` auth tidak valid, `500` gagal membaca |
 
 Nama wajib berisi teks, maksimal 100 karakter; spasi di awal/akhir dibuang.
 Email wajib valid, maksimal 254 karakter. Password minimal 8 karakter dan
@@ -177,6 +181,24 @@ Model `Product` menggunakan `UserID` sebagai foreign key ke `users.id`, dan
 asosiasi GORM `User`. Daftar product memakai `Preload("User")` untuk memuat pembuat.
 Hash password tidak dikirim dalam JSON.
 
+```mermaid
+erDiagram
+    users ||--o{ products : creates
+    users {
+        bigint id PK
+        text name
+        text email UK
+        text password_hash
+        timestamptz created_at
+    }
+    products {
+        bigint id PK
+        varchar name
+        bigint user_id FK
+        timestamptz created_at
+    }
+```
+
 Saat `go run .`, `AutoMigrate` membuat tabel `products` beserta foreign key.
 Kolom: `id`, `name`, `user_id`, `created_at`. Penghapusan user yang masih memiliki
 product ditolak oleh constraint `ON DELETE RESTRICT`.
@@ -196,6 +218,28 @@ curl -i http://localhost:8080/api/private/products \
 Nama wajib berisi teks, maksimal 100 karakter; spasi awal/akhir dibuang.
 `user_id` selalu diambil dari pengguna yang terautentikasi; nilai dari body diabaikan.
 Input tidak valid mendapat `400`; kegagalan penyimpanan mendapat `500`.
+
+Contoh respons create product:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "name": "Buku Go",
+    "user_id": 1,
+    "user": {
+      "id": 1,
+      "name": "Budi",
+      "email": "budi@example.com",
+      "created_at": "2026-10-20T10:00:00Z"
+    },
+    "created_at": "2026-10-20T10:05:00Z"
+  }
+}
+```
+
+Respons daftar memakai bentuk `{"data":[...]}` dengan objek product yang sama.
+ID dan waktu pada contoh hanya ilustrasi.
 
 `GET` mengembalikan `200` dengan `data` berupa array, hanya product milik pengguna
 yang sedang login, maksimal 100 terbaru berdasarkan ID. Jika kosong: `{"data":[]}`.
@@ -224,9 +268,12 @@ set +a
 go test -v ./...
 ```
 
-Test integrasi menjalankan migrasi tabel `users`, register/login/profil,
+Test integrasi menjalankan migrasi tabel `users` dan `products`, register/login/profil,
 hash password, email duplikat, serta pembacaan lewat koneksi PostgreSQL terpisah.
-Pengguna test memakai email unik dan dihapus setelah test. Test integrasi dilewati
+Test product memeriksa pembuat dari konteks auth, pemuatan relasi `User`,
+pembatasan daftar per pengguna, dan foreign key yang menolak penghapusan pembuat.
+Pengguna test memakai email unik; product dibersihkan sebelum pengguna setelah test.
+Test integrasi dilewati
 jika `TEST_DATABASE_URL` kosong; keberhasilan test tanpa URL bukan bukti koneksi Neon.
 
 ## Artifact project
@@ -240,6 +287,7 @@ jika `TEST_DATABASE_URL` kosong; keberhasilan test tanpa URL bukan bukti koneksi
 | `internal/auth/` | Model pengguna, repository GORM, bcrypt/JWT, handler, route, middleware auth |
 | `internal/public/routes.go` | Grup API publik tanpa middleware auth |
 | `internal/private/routes.go` | Grup API private dengan middleware auth |
+| `internal/product/` | Model relasi GORM, endpoint create/list product, dan test |
 | `internal/database/` | Validasi URL/TLS dan pool koneksi PostgreSQL |
 | `internal/middleware/mock.go` | Header hook berbeda untuk setiap endpoint |
 | `*_test.go` | Unit test dan test integrasi PostgreSQL |
@@ -274,8 +322,12 @@ gin-auth/
 │   │   └── mock.go         # Hook mock tiap endpoint
 │   ├── public/
 │   │   └── routes.go       # /api/public/info
+│   ├── product/
+│   │   ├── model.go        # Product belongs to User, foreign key user_id
+│   │   ├── routes.go       # POST/GET /api/private/products
+│   │   └── routes_test.go  # Validasi, relasi, isolasi data, foreign key
 │   └── private/
-│       └── routes.go       # /api/private/profile, wajib JWT
+│       └── routes.go       # Grup private: profile dan products, wajib JWT
 ├── .env.example         # DATABASE_URL, JWT_SECRET, PORT, TEST_DATABASE_URL
 ├── .gitignore
 ├── go.mod
