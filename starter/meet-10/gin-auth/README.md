@@ -68,6 +68,8 @@ Setiap endpoint memiliki hook `MockEndpoint` sendiri di `internal/middleware/moc
 | GET | `/api/me` | `auth.me` | Bearer JWT |
 | GET | `/api/public/info` | `public.info` | Publik |
 | GET | `/api/private/profile` | `private.profile` | Bearer JWT |
+| POST | `/api/private/products` | `private.products.create` | Bearer JWT |
+| GET | `/api/private/products` | `private.products.list` | Bearer JWT |
 
 Modul `internal/public/routes.go` menyediakan grup `/api/public` tanpa auth.
 `GET /api/public/info` mengembalikan `200` dengan:
@@ -167,7 +169,40 @@ JWT berlaku satu jam, memerlukan issuer `gin-auth`, dan hanya menerima HS256.
 Untuk latihan ini belum ada refresh token atau logout server-side;
 tambahkan revocation store saat membutuhkan pencabutan token sebelum kedaluwarsa.
 
-## Verifikasi
+## Relasi users dan products
+
+Ada dua tabel: `users` dan `products`, dengan relasi **one-to-many**:
+satu user bisa membuat banyak product; setiap product memiliki satu pembuat.
+Model `Product` menggunakan `UserID` sebagai foreign key ke `users.id`, dan
+asosiasi GORM `User`. Daftar product memakai `Preload("User")` untuk memuat pembuat.
+Hash password tidak dikirim dalam JSON.
+
+Saat `go run .`, `AutoMigrate` membuat tabel `products` beserta foreign key.
+Kolom: `id`, `name`, `user_id`, `created_at`. Penghapusan user yang masih memiliki
+product ditolak oleh constraint `ON DELETE RESTRICT`.
+
+```bash
+# TOKEN berasal dari endpoint login.
+curl -i -X POST http://localhost:8080/api/private/products \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Buku Go"}'
+
+curl -i http://localhost:8080/api/private/products \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`POST` mengembalikan `201` dengan `data` berupa product beserta `user` pembuat.
+Nama wajib berisi teks, maksimal 100 karakter; spasi awal/akhir dibuang.
+`user_id` selalu diambil dari pengguna yang terautentikasi; nilai dari body diabaikan.
+Input tidak valid mendapat `400`; kegagalan penyimpanan mendapat `500`.
+
+`GET` mengembalikan `200` dengan `data` berupa array, hanya product milik pengguna
+yang sedang login, maksimal 100 terbaru berdasarkan ID. Jika kosong: `{"data":[]}`.
+Kegagalan membaca database mendapat `500`. Kedua endpoint mendapat `401` jika
+auth tidak valid. Update/delete product belum disediakan.
+
+## Menjalankan test
 
 ```bash
 go test ./...
@@ -211,7 +246,9 @@ jika `TEST_DATABASE_URL` kosong; keberhasilan test tanpa URL bukan bukti koneksi
 
 GORM membuat tabel `users` dengan kolom `id`, `name`, `email`, `password_hash`,
 dan `created_at`; email memiliki unique index. Password disimpan sebagai hash bcrypt.
-Migrasi dijalankan otomatis saat startup; tidak ada perintah migrasi terpisah.
+Tabel `products` terhubung lewat `products.user_id`; model dan route tersedia di
+`internal/product/`, termasuk test validasi, relasi, dan pembatasan akses per user.
+Migrasi kedua tabel dijalankan otomatis saat startup; tidak ada perintah migrasi terpisah.
 Contoh request tersedia sebagai perintah curl di atas; project belum menyediakan
 file OpenAPI/Swagger atau collection Postman.
 
